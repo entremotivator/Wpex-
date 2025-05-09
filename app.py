@@ -4,29 +4,35 @@ import json
 
 st.set_page_config(page_title="WordPress CPT to n8n", layout="wide")
 
-# Session management
-if "credentials_saved" not in st.session_state:
-    st.session_state["credentials_saved"] = False
+# Initialize session state
+for key in ["credentials_saved", "wp_url", "wp_user", "wp_pass"]:
+    if key not in st.session_state:
+        st.session_state[key] = ""
 
 # Sidebar - WordPress Credentials
 st.sidebar.header("WordPress Credentials")
 
-if not st.session_state["credentials_saved"]:
-    wp_url = st.sidebar.text_input("WP Site URL", key="wp_url")
-    wp_user = st.sidebar.text_input("Username", key="wp_user")
-    wp_pass = st.sidebar.text_input("Password", type="password", key="wp_pass")
-    
+if not st.session_state.get("credentials_saved"):
+    wp_url = st.sidebar.text_input("WP Site URL", key="wp_url_input")
+    wp_user = st.sidebar.text_input("Username", key="wp_user_input")
+    wp_pass = st.sidebar.text_input("Password", type="password", key="wp_pass_input")
+
     if st.sidebar.button("Save Credentials"):
+        st.session_state["wp_url"] = wp_url
+        st.session_state["wp_user"] = wp_user
+        st.session_state["wp_pass"] = wp_pass
         st.session_state["credentials_saved"] = True
+        st.experimental_rerun()
 else:
-    st.sidebar.success("Credentials saved!")
-    wp_url = st.session_state.wp_url
-    wp_user = st.session_state.wp_user
-    wp_pass = st.session_state.wp_pass
+    st.sidebar.success("✅ Credentials saved!")
+    wp_url = st.session_state.get("wp_url", "")
+    wp_user = st.session_state.get("wp_user", "")
+    wp_pass = st.session_state.get("wp_pass", "")
+
     if st.sidebar.button("Clear Credentials"):
         for key in ["credentials_saved", "wp_url", "wp_user", "wp_pass"]:
             st.session_state.pop(key, None)
-        st.experimental_rerun()
+        st.rerun()
 
 # Sidebar - OAuth2 Credentials (Optional)
 st.sidebar.header("Optional OAuth2")
@@ -51,12 +57,12 @@ def get_bearer_token(wp_url, username, password):
 # Main UI
 st.title("📤 WordPress CPT to n8n")
 
-st.subheader("Create Custom Post JSON")
+st.subheader("1. Create Custom Post JSON")
 cpt_type = st.text_input("Post Type", value="my_custom_post")
 cpt_title = st.text_input("Post Title", value="My Post")
 cpt_content = st.text_area("Post Content", value="Some content...")
 
-if st.button("Generate CPT JSON"):
+if st.button("Generate & Send JSON"):
     cpt_json = {
         "post_type": cpt_type,
         "title": cpt_title,
@@ -64,19 +70,18 @@ if st.button("Generate CPT JSON"):
     }
     st.json(cpt_json)
 
-    # Send to n8n or download
     if n8n_webhook:
         try:
             headers = {"Authorization": f"Bearer {oauth_token}"} if oauth_token else {}
             r = requests.post(n8n_webhook, json=cpt_json, headers=headers)
             r.raise_for_status()
-            st.success(f"Sent to n8n! Status Code: {r.status_code}")
+            st.success(f"✅ Sent to n8n! Status Code: {r.status_code}")
             try:
                 st.json(r.json())
             except:
-                st.write(r.text)
+                st.text(r.text)
         except Exception as e:
-            st.error(f"n8n error: {e}")
+            st.error(f"❌ n8n error: {e}")
     else:
         st.download_button("Download .json", data=json.dumps(cpt_json, indent=2), file_name="cpt.json")
 
@@ -84,8 +89,8 @@ if st.button("Generate CPT JSON"):
 st.divider()
 
 # Generate WordPress Token (JWT)
-st.subheader("🔐 Generate WordPress Bearer Token")
-if st.button("Get Bearer Token"):
+st.subheader("2. 🔐 Generate WordPress Bearer Token (JWT Auth)")
+if st.button("Get WordPress Token"):
     if all([wp_url, wp_user, wp_pass]):
         token = get_bearer_token(wp_url, wp_user, wp_pass)
         if token:
@@ -94,29 +99,32 @@ if st.button("Get Bearer Token"):
         else:
             st.warning("Could not retrieve token.")
     else:
-        st.warning("Please enter credentials.")
+        st.warning("Enter all credentials first.")
 
 # Divider
 st.divider()
 
 # Pull .json files from DOM endpoint
-st.subheader("🌐 Load .json Files from DOM or API Endpoint")
-json_feed_url = st.text_input("Enter Endpoint or Folder URL (returns JSON or file list)", placeholder="https://example.com/json-feed")
+st.subheader("3. 🌐 Load .json Files from Remote Endpoint")
+json_feed_url = st.text_input("Enter Endpoint or Folder URL (must return .json or list of URLs)", placeholder="https://jsonplaceholder.typicode.com/posts")
 
-if st.button("Fetch .json Files"):
+if st.button("Fetch JSON Data"):
     try:
         res = requests.get(json_feed_url)
         res.raise_for_status()
         content = res.json()
+
         if isinstance(content, list):
-            for item in content:
+            st.write(f"🗂 Found {len(content)} items")
+            for i, item in enumerate(content, 1):
                 if isinstance(item, str) and item.endswith(".json"):
-                    st.markdown(f"📁 [{item}]({item})")
+                    st.markdown(f"{i}. 📁 [{item}]({item})")
                 elif isinstance(item, dict):
-                    st.json(item)
+                    with st.expander(f"Item {i}"):
+                        st.json(item)
                 else:
                     st.write(item)
         else:
             st.json(content)
     except Exception as e:
-        st.error(f"Could not load JSON: {e}")
+        st.error(f"❌ Could not load JSON: {e}")
